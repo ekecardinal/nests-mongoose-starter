@@ -14,8 +14,5 @@ export class UpdateAuthDto extends PartialType(CreateAuthDto) {
   //   readonly password: string;
 
   @IsOptional()
-  readonly role: string;
-
-  @IsOptional()
   readonly disabled: boolean;
 }

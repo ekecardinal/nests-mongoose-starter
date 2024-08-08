@@ -11,9 +11,6 @@ export class CreateAuthDto {
   @MinLength(8)
   readonly password: string;
 
-  @IsNotEmpty()
-  readonly role: string;
-
   @IsOptional()
   readonly disabled: boolean;
 }

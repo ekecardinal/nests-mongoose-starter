@@ -14,8 +14,8 @@ export class User {
   @Prop()
   password: string;
 
-  @Prop({ type: String, enum: ['admin', 'user'], default: 'user' })
-  role: string;
+  // @Prop({ type: String, enum: ['admin', 'user'], default: 'user' })
+  // role: string;
 
   @Prop()
   disabled: boolean;
