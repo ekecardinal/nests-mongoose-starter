@@ -34,11 +34,11 @@ export class AuthService {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await this.userModel.create({
-      data: { ...createAuthDto, password: hashedPassword },
+      ...createAuthDto,
+      password: hashedPassword,
     });
 
     const token = this.jwtService.sign({ id: user.id });
-    // let token = 'ghajkwiueygtdfbnxjsak';
     return {
       token,
       user: {
@@ -50,15 +50,16 @@ export class AuthService {
     };
   }
 
-  // Staff Login
+  // Login
   async login(
     loginDto: LoginDto,
   ): Promise<{ token: string; user: object; message: string }> {
     const { email, password } = loginDto;
 
     const user = await this.userModel.findOne({
-      where: { email },
+      email: email,
     });
+    console.log('user', user);
     if (!user) {
       throw new BadRequestException('Invalid email');
     }
@@ -90,9 +91,7 @@ export class AuthService {
 
   // Update Staff
   async update(id: string, updateAuthDto: UpdateAuthDto): Promise<User> {
-    const user = await this.userModel.findById({
-      id: id,
-    });
+    const user = await this.userModel.findById(id);
 
     if (!user) {
       throw new UnauthorizedException('User does not exist');
@@ -107,9 +106,7 @@ export class AuthService {
   //Reset Password
   async resetPassword(id: string, updateAuthDto: ResetPassword) {
     const password = updateAuthDto.password;
-    const user = await this.userModel.findOne({
-      id: id,
-    });
+    const user = await this.userModel.findById(id);
 
     if (!user) {
       throw new UnauthorizedException('User does not exist');
@@ -119,23 +116,18 @@ export class AuthService {
 
     return await this.userModel.findByIdAndUpdate({
       id: id,
-
       password: hashedPassword,
     });
   }
 
   //Delete User
   async remove(id: string) {
-    const user = await this.userModel.findOne({
-      id: id,
-    });
+    const user = await this.userModel.findById(id);
 
     if (!user) {
       throw new UnauthorizedException('User does not exist');
     }
-    await this.userModel.findOneAndDelete({
-      id: id,
-    });
+    await this.userModel.findByIdAndDelete(id);
     return { message: 'User deleted successfully' };
   }
 }
