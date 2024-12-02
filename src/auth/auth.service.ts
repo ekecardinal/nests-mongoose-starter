@@ -8,10 +8,22 @@ import { JwtService } from '@nestjs/jwt';
 import { LoginDto } from './dto/login.dto';
 import { UpdateAuthDto } from './dto/update-auth.dto';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { CreateAuthDto } from './dto/create-auth.dto';
 import { User } from './schemas/user.schema';
-import { ResetPassword } from './dto/reset-password.dto';
+import { Otp } from './schemas/otp.schema';
+import { OtpMessage } from './mail/otp';
+import { ResendOtpDto } from './dto/resend-otp.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { transporter } from '../mail-transporter/transporter';
+import { Query } from 'express-serve-static-core';
+
+interface OtpType {
+  firstName: string;
+  email: string;
+  id: string | Types.ObjectId;
+}
 
 @Injectable()
 export class AuthService {
@@ -19,8 +31,11 @@ export class AuthService {
     @InjectModel(User.name)
     private userModel: Model<User>,
     private jwtService: JwtService,
+    @InjectModel(Otp.name)
+    private otpModel: Model<Otp>,
   ) {}
 
+  //Register User
   async create(createAuthDto: CreateAuthDto) {
     const { email, password } = createAuthDto;
 
@@ -38,13 +53,21 @@ export class AuthService {
       password: hashedPassword,
     });
 
-    const token = this.jwtService.sign({ id: user.id });
+    const otp = await this.sendOtp({
+      email: user.email,
+      firstName: user.firstName,
+      id: user._id,
+    });
+
+    const token = this.jwtService.sign({
+      id: user.id,
+    });
     return {
       token,
       user: {
         email: user.email,
-        name: user.name,
-        id: user.id,
+        name: user.firstName + ' ' + user.lastName,
+        id: user._id,
       },
       message: 'Registered Successfully',
     };
@@ -59,7 +82,7 @@ export class AuthService {
     const user = await this.userModel.findOne({
       email: email,
     });
-    console.log('user', user);
+
     if (!user) {
       throw new BadRequestException('Invalid email');
     }
@@ -72,24 +95,52 @@ export class AuthService {
     if (!passwordMatched) {
       throw new UnauthorizedException('Invalid password');
     }
-    const token = this.jwtService.sign({ id: user.id });
+    const token = this.jwtService.sign({ id: user._id });
 
     return {
       token,
       user: {
         email: user.email,
-        name: user.name,
-        id: user.id,
+        name: user.firstName + ' ' + user.lastName,
+        id: user._id,
       },
       message: 'Login Successfully',
     };
   }
 
-  async findAll() {
-    return await this.userModel.find();
+  async findAll(query: Query): Promise<{ students: User[]; count: number }> {
+    const limit = Number(query.limit) || 20;
+    const currentPage = Number(query.offset) || 1;
+    const skip = limit * (currentPage - 1);
+    const firstName = query.name
+      ? {
+          firstName: {
+            $regex: query.firstName,
+            $options: 'i',
+          },
+        }
+      : {};
+    const email = query.email
+      ? {
+          email: {
+            $regex: query.email,
+            $options: 'i',
+          },
+        }
+      : {};
+    const students = await this.userModel
+      .find({ ...firstName, ...email })
+      .skip(skip)
+      .limit(limit);
+
+    const count = await this.userModel.countDocuments({
+      ...firstName,
+      ...email,
+    });
+    return { students, count };
   }
 
-  // Update Staff
+  // Update User
   async update(id: string, updateAuthDto: UpdateAuthDto): Promise<User> {
     const user = await this.userModel.findById(id);
 
@@ -97,16 +148,13 @@ export class AuthService {
       throw new UnauthorizedException('User does not exist');
     }
 
-    return await this.userModel.findByIdAndUpdate({
-      id: id,
-      data: updateAuthDto,
-    });
+    return await this.userModel.findByIdAndUpdate(id, { updateAuthDto });
   }
 
   //Reset Password
-  async resetPassword(id: string, updateAuthDto: ResetPassword) {
+  async resetPassword(updateAuthDto: LoginDto) {
     const password = updateAuthDto.password;
-    const user = await this.userModel.findById(id);
+    const user = await this.userModel.findOne({ email: updateAuthDto.email });
 
     if (!user) {
       throw new UnauthorizedException('User does not exist');
@@ -114,8 +162,7 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    return await this.userModel.findByIdAndUpdate({
-      id: id,
+    return await this.userModel.findByIdAndUpdate(user._id, {
       password: hashedPassword,
     });
   }
@@ -129,5 +176,99 @@ export class AuthService {
     }
     await this.userModel.findByIdAndDelete(id);
     return { message: 'User deleted successfully' };
+  }
+
+  // Email OTP
+  async emailOtp(emailDto: ResetPasswordDto) {
+    const otp = `${Math.floor(100000 + Math.random() * 900000)}`;
+
+    const user = await this.userModel.findOne({
+      email: emailDto.email,
+    });
+    const hashedOtp = await bcrypt.hash(otp, 10);
+    const res = await this.otpModel.create({
+      userId: user.id,
+      otp: hashedOtp,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3600000,
+    });
+    await transporter.sendMail(OtpMessage({ ...user, otp }));
+    return { message: 'OTP sent to email', user };
+  }
+
+  //send OTP
+  async sendOtp(contact: OtpType) {
+    const otp = `${Math.floor(100000 + Math.random() * 900000)}`;
+
+    const hashedOtp = await bcrypt.hash(otp, 10);
+    const res = await this.otpModel.create({
+      userId: contact.id,
+      otp: hashedOtp,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3600000,
+    });
+    await transporter.sendMail(OtpMessage({ ...contact, otp }));
+    return res;
+  }
+
+  // Resend OTP
+  async resendOtp(contact: ResendOtpDto) {
+    const otp = `${Math.floor(100000 + Math.random() * 900000)}`;
+
+    if (!contact.id) {
+      throw new BadRequestException('Invalid User');
+    }
+    const user = await this.userModel.findById(contact.id);
+
+    if (!user) {
+      throw new UnauthorizedException('User does not exist');
+    }
+
+    const del = await this.otpModel.deleteMany({ userId: contact.id });
+    const hashedOtp = await bcrypt.hash(otp, 10);
+    const res = await this.otpModel.create({
+      userId: contact.id,
+      otp: hashedOtp,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3600000,
+    });
+    await transporter.sendMail(
+      OtpMessage({ firstName: user.firstName, email: user.email, otp }),
+    );
+    return { message: 'OTP sent successfully' };
+  }
+
+  // Verify OTP
+  async verifyOtp(contact: VerifyOtpDto) {
+    const user = await this.userModel.findById(contact.id);
+
+    if (!user) {
+      throw new UnauthorizedException('User does not exist');
+    }
+
+    const otp = await this.otpModel.findOne({ userId: contact.id });
+    if (!otp) {
+      throw new UnauthorizedException('OTP does not exist');
+    }
+    if (otp.expiresAt < Date.now()) {
+      throw new UnauthorizedException('OTP expired');
+    }
+    const valid = await bcrypt.compare(contact.otp, otp.otp);
+    if (!valid) {
+      throw new UnauthorizedException('Invalid OTP');
+    }
+    const del = await this.otpModel.deleteOne({ userId: contact.id });
+
+    const res = await this.userModel.findByIdAndUpdate(
+      contact.id,
+      {
+        verified: true,
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
+    );
+    return { message: 'OTP verified successfully', user: res };
   }
 }

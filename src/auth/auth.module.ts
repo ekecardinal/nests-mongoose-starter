@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { UserSchema } from './schemas/user.schema';
 import { PassportModule } from '@nestjs/passport';
+import { Otp, OtpSchema } from './schemas/otp.schema';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { PassportModule } from '@nestjs/passport';
       },
     }),
     MongooseModule.forFeature([{ name: 'User', schema: UserSchema }]),
+    MongooseModule.forFeature([{ name: Otp.name, schema: OtpSchema }]),
   ],
   controllers: [AuthController],
   providers: [AuthService],
